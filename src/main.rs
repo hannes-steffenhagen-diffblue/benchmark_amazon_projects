@@ -2,8 +2,10 @@
 // in particular we need multi-producer channels which we'd have to implement on
 // top of mpsc ourselves without this
 extern crate crossbeam_channel;
+extern crate structopt;
 
 use crossbeam_channel::{Receiver, Sender};
+use structopt::StructOpt;
 use std::collections::HashMap;
 use std::fs::ReadDir;
 use std::io::Result as IOResult;
@@ -150,9 +152,9 @@ fn benchmark_all_proofs_in(path: &Path, iterations: u32, parallel_jobs: u32) -> 
     let (sender, receiver) = crossbeam_channel::unbounded();
     let mut proof_runtimes: HashMap<PathBuf, Vec<Duration>> = HashMap::new();
     let mut started_runs: HashMap<PathBuf, Instant> = HashMap::new();
-    let nr_of_jobs = run_all_proofs_in(path, iterations, 4, sender.clone())?;
+    let nr_of_jobs = run_all_proofs_in(path, iterations, parallel_jobs, sender.clone())?;
     let mut completed_jobs = 0;
-    loop {
+    while completed_jobs < nr_of_jobs {
         use JobMessagePayload::*;
         let JobMessage(proof_path, timestamp, message_type) = receiver.recv().unwrap();
         match message_type {
@@ -162,9 +164,6 @@ fn benchmark_all_proofs_in(path: &Path, iterations: u32, parallel_jobs: u32) -> 
             JobFinished => {
                 completed_jobs += 1;
                 println!("COMPLETED [{}/{}] jobs", completed_jobs, nr_of_jobs);
-                if completed_jobs == nr_of_jobs {
-                    break;
-                }
             }
             RunStarted => {
                 started_runs.insert(proof_path, timestamp);
@@ -190,25 +189,21 @@ fn benchmark_all_proofs_in(path: &Path, iterations: u32, parallel_jobs: u32) -> 
     Ok(())
 }
 
+#[derive(StructOpt)]
+struct Arguments {
+    #[structopt(long, parse(from_os_str))]
+    proofs_path: PathBuf,
+    #[structopt(long)]
+    iterations: u32,
+    #[structopt(long)]
+    parallel_jobs: u32,
+}
+
 fn main() -> IOResult<()> {
-    use std::thread;
-    let iterations = 1;
-    let parallel_jobs = 5;
+    let args = Arguments::from_args();
+
     benchmark_all_proofs_in(
-        Path::new("/home/hannes/Documents/Diffblue/aws-c-common/verification/cbmc/proofs"),
-        iterations,
-        parallel_jobs,
-    )
-    // let job_path = Path::new("/home/hannes/Documents/Diffblue/aws-c-common/verification/cbmc/proofs/aws_array_eq");
-    // thread::spawn(move || {
-    //     run_job(job_path, iterations, sender)
-    // });
-    // for _ in 0 .. iterations {
-    //     if let JobMessage::RunStarted(_, start_time) = receiver.recv().unwrap() {
-    //         if let JobMessage::RunFinished(_, end_time) = receiver.recv().unwrap() {
-    //             let runtime = end_time.duration_since(start_time);
-    //             println!("Job time: {}", runtime.as_secs_f32());
-    //         }
-    //     }
-    // }
+        &args.proofs_path,
+        args.iterations,
+        args.parallel_jobs)
 }
