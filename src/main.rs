@@ -5,13 +5,13 @@ extern crate crossbeam_channel;
 extern crate structopt;
 
 use crossbeam_channel::{Receiver, Sender};
-use structopt::StructOpt;
 use std::collections::HashMap;
 use std::fs::ReadDir;
-use std::io::Result as IOResult;
+use std::io::{Result as IOResult, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::{Duration, Instant};
+use structopt::StructOpt;
 
 #[derive(Clone, Copy, PartialEq)]
 enum JobMessagePayload {
@@ -134,21 +134,39 @@ fn run_all_proofs_in(
 
 fn dump_csv<'a, RunResults: Iterator<Item = (&'a PathBuf, &'a Vec<Duration>)>>(
     run_results: RunResults,
+    csv_path: &Path,
 ) {
+    let mut csv_file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(csv_path)
+        .expect("csv_file should exist");
     for (path, runs) in run_results {
-        print!(
-            "{}",
-            path.to_str()
-                .expect("paths should be convertible to unicode")
-        );
+        csv_file
+            .write(
+                format!(
+                    "{}",
+                    path.to_str()
+                        .expect("paths should be convertible to unicode")
+                )
+                .as_bytes(),
+            )
+            .unwrap();
         for run in runs {
-            print!(",{}", run.as_secs_f32());
+            csv_file
+                .write(format!(",{}", run.as_secs_f32()).as_bytes())
+                .unwrap();
         }
-        println!();
+        csv_file.write("\n".as_bytes()).unwrap();
     }
 }
 
-fn benchmark_all_proofs_in(path: &Path, iterations: u32, parallel_jobs: u32) -> IOResult<()> {
+fn benchmark_all_proofs_in(
+    path: &Path,
+    iterations: u32,
+    parallel_jobs: u32,
+    csv_path: &Path,
+) -> IOResult<()> {
     let (sender, receiver) = crossbeam_channel::unbounded();
     let mut proof_runtimes: HashMap<PathBuf, Vec<Duration>> = HashMap::new();
     let mut started_runs: HashMap<PathBuf, Instant> = HashMap::new();
@@ -185,7 +203,7 @@ fn benchmark_all_proofs_in(path: &Path, iterations: u32, parallel_jobs: u32) -> 
             }
         }
     }
-    dump_csv(proof_runtimes.iter());
+    dump_csv(proof_runtimes.iter(), csv_path);
     Ok(())
 }
 
@@ -197,6 +215,8 @@ struct Arguments {
     iterations: u32,
     #[structopt(long)]
     parallel_jobs: u32,
+    #[structopt(long, parse(from_os_str))]
+    csv_file: PathBuf,
 }
 
 fn main() -> IOResult<()> {
@@ -205,5 +225,7 @@ fn main() -> IOResult<()> {
     benchmark_all_proofs_in(
         &args.proofs_path,
         args.iterations,
-        args.parallel_jobs)
+        args.parallel_jobs,
+        &args.csv_file,
+    )
 }
