@@ -6,13 +6,13 @@ extern crate structopt;
 
 use crossbeam_channel::Sender;
 use std::collections::HashMap;
+use std::error::Error;
+use std::fs::{File, OpenOptions};
 use std::io::{Result as IOResult, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 use structopt::StructOpt;
-use std::fs::{File, OpenOptions};
-use std::error::Error;
 
 #[derive(Clone, Copy, PartialEq)]
 enum JobMessagePayload {
@@ -140,21 +140,21 @@ fn run_all_proofs_in(
 fn dump_csv<'a, RunResults: Iterator<Item = &'a Duration>>(
     proof_path: &Path,
     run_results: RunResults,
-    csv_file: &mut File) -> IOResult<()> {
-        csv_file
-            .write(
-                format!(
-                    "{}",
-                    proof_path.to_str()
-                        .expect("paths should be convertible to unicode")
-                )
-                .as_bytes(),
-            )?;
-        for run in run_results {
-            csv_file
-                .write(format!(",{}", run.as_secs_f32()).as_bytes())?;
-        }
-        csv_file.write("\n".as_bytes())?;
+    csv_file: &mut File,
+) -> IOResult<()> {
+    csv_file.write(
+        format!(
+            "{}",
+            proof_path
+                .to_str()
+                .expect("paths should be convertible to unicode")
+        )
+        .as_bytes(),
+    )?;
+    for run in run_results {
+        csv_file.write(format!(",{}", run.as_secs_f32()).as_bytes())?;
+    }
+    csv_file.write("\n".as_bytes())?;
     csv_file.flush()
 }
 
@@ -164,10 +164,7 @@ fn benchmark_all_proofs_in(
     parallel_jobs: u32,
     csv_path: &Path,
 ) -> Result<(), Box<dyn Error>> {
-    let mut csv_file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .open(csv_path)?;
+    let mut csv_file = OpenOptions::new().create(true).write(true).open(csv_path)?;
     let (sender, receiver) = crossbeam_channel::unbounded();
     let mut proof_runtimes: HashMap<PathBuf, Vec<Duration>> = HashMap::new();
     let mut started_runs: HashMap<PathBuf, Instant> = HashMap::new();
@@ -182,7 +179,11 @@ fn benchmark_all_proofs_in(
             }
             JobFinished => {
                 completed_jobs += 1;
-                dump_csv(&proof_path, proof_runtimes[&proof_path].iter(), &mut csv_file)?;
+                dump_csv(
+                    &proof_path,
+                    proof_runtimes[&proof_path].iter(),
+                    &mut csv_file,
+                )?;
                 println!("COMPLETED [{}/{}] jobs", completed_jobs, nr_of_jobs);
             }
             RunStarted => {
@@ -220,7 +221,7 @@ struct Arguments {
     csv_file: PathBuf,
 }
 
-fn main() -> Result<(), Box<dyn Error>>{
+fn main() -> Result<(), Box<dyn Error>> {
     let args = Arguments::from_args();
 
     benchmark_all_proofs_in(
