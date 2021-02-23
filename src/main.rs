@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 use structopt::StructOpt;
+use std::fs::{File, OpenOptions};
+use std::error::Error;
 
 #[derive(Clone, Copy, PartialEq)]
 enum JobMessagePayload {
@@ -135,33 +137,25 @@ fn run_all_proofs_in(
     Ok(nr_of_proofs)
 }
 
-fn dump_csv<'a, RunResults: Iterator<Item = (&'a PathBuf, &'a Vec<Duration>)>>(
+fn dump_csv<'a, RunResults: Iterator<Item = &'a Duration>>(
+    proof_path: &Path,
     run_results: RunResults,
-    csv_path: &Path,
-) {
-    let mut csv_file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .open(csv_path)
-        .expect("csv_file should exist");
-    for (path, runs) in run_results {
+    csv_file: &mut File) -> IOResult<()> {
         csv_file
             .write(
                 format!(
                     "{}",
-                    path.to_str()
+                    proof_path.to_str()
                         .expect("paths should be convertible to unicode")
                 )
                 .as_bytes(),
-            )
-            .unwrap();
-        for run in runs {
+            )?;
+        for run in run_results {
             csv_file
-                .write(format!(",{}", run.as_secs_f32()).as_bytes())
-                .unwrap();
+                .write(format!(",{}", run.as_secs_f32()).as_bytes())?;
         }
-        csv_file.write("\n".as_bytes()).unwrap();
-    }
+        csv_file.write("\n".as_bytes())?;
+    csv_file.flush()
 }
 
 fn benchmark_all_proofs_in(
@@ -169,7 +163,11 @@ fn benchmark_all_proofs_in(
     iterations: u32,
     parallel_jobs: u32,
     csv_path: &Path,
-) -> IOResult<()> {
+) -> Result<(), Box<dyn Error>> {
+    let mut csv_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(csv_path)?;
     let (sender, receiver) = crossbeam_channel::unbounded();
     let mut proof_runtimes: HashMap<PathBuf, Vec<Duration>> = HashMap::new();
     let mut started_runs: HashMap<PathBuf, Instant> = HashMap::new();
@@ -184,6 +182,7 @@ fn benchmark_all_proofs_in(
             }
             JobFinished => {
                 completed_jobs += 1;
+                dump_csv(&proof_path, proof_runtimes[&proof_path].iter(), &mut csv_file)?;
                 println!("COMPLETED [{}/{}] jobs", completed_jobs, nr_of_jobs);
             }
             RunStarted => {
@@ -196,7 +195,7 @@ fn benchmark_all_proofs_in(
                 let runtime = timestamp - start_time;
                 println!(
                     "{} finished after {}s",
-                    proof_path.to_str().unwrap(),
+                    proof_path.to_str().expect("paths should be valid utf-8"),
                     runtime.as_secs_f32()
                 );
                 proof_runtimes
@@ -206,7 +205,6 @@ fn benchmark_all_proofs_in(
             }
         }
     }
-    dump_csv(proof_runtimes.iter(), csv_path);
     Ok(())
 }
 
@@ -222,7 +220,7 @@ struct Arguments {
     csv_file: PathBuf,
 }
 
-fn main() -> IOResult<()> {
+fn main() -> Result<(), Box<dyn Error>>{
     let args = Arguments::from_args();
 
     benchmark_all_proofs_in(
