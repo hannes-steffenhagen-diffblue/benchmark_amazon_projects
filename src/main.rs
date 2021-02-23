@@ -4,9 +4,8 @@
 extern crate crossbeam_channel;
 extern crate structopt;
 
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::Sender;
 use std::collections::HashMap;
-use std::fs::ReadDir;
 use std::io::{Result as IOResult, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
@@ -36,7 +35,9 @@ fn run_make(make_command: &str, working_directory: &Path) -> IOResult<ExitStatus
 
 fn run_proof(path: &Path, iterations: u32, sender: Sender<JobMessage>) {
     use JobMessagePayload::*;
-    sender.send(JobMessage(path.to_path_buf(), Instant::now(), JobStarted));
+    sender
+        .send(JobMessage(path.to_path_buf(), Instant::now(), JobStarted))
+        .expect("sending should work");
     for _ in 0..iterations {
         run_make("veryclean", path).unwrap();
         run_make("goto", path).unwrap();
@@ -48,7 +49,9 @@ fn run_proof(path: &Path, iterations: u32, sender: Sender<JobMessage>) {
             .send(JobMessage(path.to_path_buf(), Instant::now(), RunFinished))
             .unwrap();
     }
-    sender.send(JobMessage(path.to_path_buf(), Instant::now(), JobFinished));
+    sender
+        .send(JobMessage(path.to_path_buf(), Instant::now(), JobFinished))
+        .expect("sending should work");
 }
 
 fn to_proof_dir(maybe_entry: IOResult<std::fs::DirEntry>) -> Option<PathBuf> {
@@ -106,7 +109,7 @@ fn run_all_proofs_in(
             loop {
                 let job_message = relay_receiver.recv().unwrap();
                 let is_job_finished = job_message.2 == JobFinished;
-                sender.send(job_message);
+                sender.send(job_message).expect("sending should work");
                 if is_job_finished {
                     finished_jobs += 1;
                     break;
@@ -122,7 +125,7 @@ fn run_all_proofs_in(
             loop {
                 let job_message = relay_receiver.recv().unwrap();
                 let is_job_finished = job_message.2 == JobFinished;
-                sender.send(job_message);
+                sender.send(job_message).expect("sending should work");
                 if is_job_finished {
                     break;
                 }
