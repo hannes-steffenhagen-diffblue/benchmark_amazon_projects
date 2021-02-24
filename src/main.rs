@@ -45,19 +45,19 @@ fn run_proof(path: &Path, iterations: u32, sender: &Sender<JobMessage>) {
     use JobMessagePayload::*;
     sender
         .send(JobMessage(path.to_path_buf(), Instant::now(), JobStarted))
-        .expect("sending should work");
+        .expect("Receiver shouldn't die while we're still sending messages");
     for _ in 0..iterations {
         sender
             .send(JobMessage(path.to_path_buf(), Instant::now(), RunStarted))
-            .unwrap();
+            .expect("Receiver shouldn't die while we're still sending messages");
         run_make("result", path).unwrap();
         sender
             .send(JobMessage(path.to_path_buf(), Instant::now(), RunFinished))
-            .unwrap();
+            .expect("Receiver shouldn't die while we're still sending messages");
     }
     sender
         .send(JobMessage(path.to_path_buf(), Instant::now(), JobFinished))
-        .expect("sending should work");
+        .expect("Receiver shouldn't die while we're still sending messages");
 }
 
 fn to_proof_dir(maybe_entry: IOResult<std::fs::DirEntry>) -> Option<PathBuf> {
