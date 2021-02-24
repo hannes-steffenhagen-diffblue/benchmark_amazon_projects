@@ -113,23 +113,21 @@ fn run_all_proofs_in(
         proof_dirs_mut
     };
     let nr_of_jobs = proof_dirs.len();
-    spawn(move || {
-        let (job_run_sender, job_run_receiver) = crossbeam_channel::unbounded();
-        // spawn the first <parallel-jobs> jobs
-        for _ in 0..parallel_jobs {
-            start_proof_job(&job_run_receiver, &sender);
-        }
+    let (job_run_sender, job_run_receiver) = crossbeam_channel::unbounded();
+    // spawn the first <parallel-jobs> jobs
+    for _ in 0..parallel_jobs {
+        start_proof_job(&job_run_receiver, &sender);
+    }
 
-        // wait for a job to finish before starting the next one
-        for proof_dir in proof_dirs.iter() {
-            job_run_sender
-                .send(RunProofMessage {
-                    job_path: proof_dir.clone(),
-                    iterations,
-                })
-                .expect("there should be always at least one job listening to job run requests");
-        }
-    });
+    // wait for a job to finish before starting the next one
+    for proof_dir in proof_dirs.iter() {
+        job_run_sender
+            .send(RunProofMessage {
+                job_path: proof_dir.clone(),
+                iterations,
+            })
+            .expect("there should be always at least one job listening to job run requests");
+    }
     Ok(nr_of_jobs)
 }
 
@@ -175,11 +173,7 @@ fn benchmark_all_proofs_in(
             }
             JobFinished => {
                 completed_jobs += 1;
-                dump_csv(
-                    job_name,
-                    proof_runtimes[&proof_path].iter(),
-                    &mut csv_file,
-                )?;
+                dump_csv(job_name, proof_runtimes[&proof_path].iter(), &mut csv_file)?;
                 println!("COMPLETED [{}/{}] jobs", completed_jobs, nr_of_jobs);
             }
             RunStarted => {
@@ -189,12 +183,7 @@ fn benchmark_all_proofs_in(
                     .expect("can not start a run for a job that hasn't started yet")
                     .len()
                     + 1;
-                println!(
-                    "STARTING RUN [{}/{}] for {}",
-                    run_nr,
-                    iterations,
-                    job_name
-                );
+                println!("STARTING RUN [{}/{}] for {}", run_nr, iterations, job_name);
             }
             RunFailed => {
                 let start_time = started_runs
