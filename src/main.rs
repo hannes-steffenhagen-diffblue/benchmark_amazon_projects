@@ -134,19 +134,11 @@ fn run_all_proofs_in(
 }
 
 fn dump_csv<'a, RunResults: Iterator<Item = &'a Option<Duration>>>(
-    proof_path: &Path,
+    job_name: &str,
     run_results: RunResults,
     csv_file: &mut File,
 ) -> IOResult<()> {
-    csv_file.write(
-        format!(
-            "{}",
-            proof_path
-                .to_str()
-                .expect("paths should be convertible to unicode")
-        )
-        .as_bytes(),
-    )?;
+    csv_file.write(job_name.as_bytes())?;
     for run in run_results {
         csv_file.write(",".as_bytes())?;
         if let Some(runtime) = run {
@@ -170,19 +162,21 @@ fn benchmark_all_proofs_in(
     let nr_of_jobs = run_all_proofs_in(path, iterations, parallel_jobs, sender)?;
     let mut completed_jobs = 0;
     while let Ok(JobMessage(proof_path, timestamp, message_type)) = receiver.recv() {
+        let job_name = proof_path
+            .file_name()
+            .expect("proof paths do not end in ..")
+            .to_str()
+            .expect("paths should be convertible to utf-8");
         use JobMessagePayload::*;
         match message_type {
             JobStarted => {
-                println!(
-                    "STARTING {}",
-                    proof_path.to_str().expect("paths should be valid utf-8")
-                );
+                println!("STARTING {}", job_name);
                 proof_runtimes.insert(proof_path, Vec::new());
             }
             JobFinished => {
                 completed_jobs += 1;
                 dump_csv(
-                    &proof_path,
+                    job_name,
                     proof_runtimes[&proof_path].iter(),
                     &mut csv_file,
                 )?;
@@ -199,7 +193,7 @@ fn benchmark_all_proofs_in(
                     "STARTING RUN [{}/{}] for {}",
                     run_nr,
                     iterations,
-                    proof_path.to_str().expect("paths should be valid utf-8")
+                    job_name
                 );
             }
             RunFailed => {
@@ -214,7 +208,7 @@ fn benchmark_all_proofs_in(
                     "FAILED RUN [{}/{}] for {} after {}s",
                     proof_runtime.len(),
                     iterations,
-                    proof_path.to_str().expect("paths should be valid utf-8"),
+                    job_name,
                     runtime.as_secs_f32()
                 );
                 proof_runtime.push(None);
@@ -232,7 +226,7 @@ fn benchmark_all_proofs_in(
                     "FINISHED RUN [{}/{}] for {} after {}s",
                     proof_runtime.len(),
                     iterations,
-                    proof_path.to_str().expect("paths should be valid utf-8"),
+                    job_name,
                     runtime.as_secs_f32()
                 );
             }
