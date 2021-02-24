@@ -108,7 +108,6 @@ fn run_all_proofs_in(
     sender: Sender<JobMessage>,
 ) -> IOResult<usize> {
     use std::fs::read_dir;
-    use std::thread::spawn;
     let proof_dirs = {
         let mut proof_dirs_mut: Vec<PathBuf> =
             read_dir(proofs_path)?.filter_map(to_proof_dir).collect();
