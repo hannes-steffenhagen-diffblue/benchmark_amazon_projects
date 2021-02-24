@@ -4,7 +4,7 @@
 extern crate crossbeam_channel;
 extern crate structopt;
 
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::{File, OpenOptions};
@@ -25,6 +25,10 @@ enum JobMessagePayload {
 }
 
 struct JobMessage(PathBuf, Instant, JobMessagePayload);
+struct RunProofMessage {
+    job_path: PathBuf,
+    iterations: u32,
+}
 
 fn run_make(make_command: &str, working_directory: &Path) -> IOResult<ExitStatus> {
     use std::process::{Command, Stdio};
@@ -37,14 +41,12 @@ fn run_make(make_command: &str, working_directory: &Path) -> IOResult<ExitStatus
         .status()
 }
 
-fn run_proof(path: &Path, iterations: u32, sender: Sender<JobMessage>) {
+fn run_proof(path: &Path, iterations: u32, sender: &Sender<JobMessage>) {
     use JobMessagePayload::*;
     sender
         .send(JobMessage(path.to_path_buf(), Instant::now(), JobStarted))
         .expect("sending should work");
     for _ in 0..iterations {
-        run_make("veryclean", path).unwrap();
-        run_make("goto", path).unwrap();
         sender
             .send(JobMessage(path.to_path_buf(), Instant::now(), RunStarted))
             .unwrap();
@@ -72,11 +74,19 @@ fn to_proof_dir(maybe_entry: IOResult<std::fs::DirEntry>) -> Option<PathBuf> {
     })
 }
 
-fn start_proof_job(path: &Path, iterations: u32, sender: &Sender<JobMessage>) {
+fn start_proof_job(receiver: &Receiver<RunProofMessage>, sender: &Sender<JobMessage>) {
     use std::thread::spawn;
     let job_sender = sender.clone();
-    let job_path = path.to_path_buf();
-    spawn(move || run_proof(&job_path, iterations, job_sender));
+    let job_receiver = receiver.clone();
+    spawn(move || {
+        while let Ok(run_proof_message) = job_receiver.recv() {
+            run_proof(
+                &run_proof_message.job_path,
+                run_proof_message.iterations,
+                &job_sender,
+            );
+        }
+    });
 }
 
 // run all proofs in proofs_path in parallel with parallel_jobs parallel jobs and send run messages
@@ -95,48 +105,25 @@ fn run_all_proofs_in(
         proof_dirs_mut.sort();
         proof_dirs_mut
     };
-    let nr_of_proofs = proof_dirs.len();
+    let nr_of_jobs = proof_dirs.len();
     spawn(move || {
-        let (relay_sender, relay_receiver) = crossbeam_channel::unbounded();
-
-        let initial_proof_jobs = proof_dirs.len().min(parallel_jobs as usize);
-
+        let (job_run_sender, job_run_receiver) = crossbeam_channel::unbounded();
         // spawn the first <parallel-jobs> jobs
-        for i in 0..initial_proof_jobs {
-            start_proof_job(&proof_dirs[i], iterations, &relay_sender);
+        for _ in 0..parallel_jobs {
+            start_proof_job(&job_run_receiver, &sender);
         }
 
-        let mut finished_jobs = 0;
         // wait for a job to finish before starting the next one
-        for proof_dir in proof_dirs.iter().skip(initial_proof_jobs) {
-            use JobMessagePayload::JobFinished;
-            loop {
-                let job_message = relay_receiver.recv().unwrap();
-                let is_job_finished = job_message.2 == JobFinished;
-                sender.send(job_message).expect("sending should work");
-                if is_job_finished {
-                    finished_jobs += 1;
-                    break;
-                }
-            }
-            start_proof_job(&proof_dir, iterations, &relay_sender);
-        }
-
-        // with the way the above loop is structured we'll normally have jobs (at least 1)
-        // remaining at the end who's messages we also need to relay
-        for _ in 0..(nr_of_proofs - finished_jobs) {
-            use JobMessagePayload::JobFinished;
-            loop {
-                let job_message = relay_receiver.recv().unwrap();
-                let is_job_finished = job_message.2 == JobFinished;
-                sender.send(job_message).expect("sending should work");
-                if is_job_finished {
-                    break;
-                }
-            }
+        for proof_dir in proof_dirs.iter() {
+            job_run_sender
+                .send(RunProofMessage {
+                    job_path: proof_dir.clone(),
+                    iterations,
+                })
+                .expect("there should be always at least one job listening to job run requests");
         }
     });
-    Ok(nr_of_proofs)
+    Ok(nr_of_jobs)
 }
 
 fn dump_csv<'a, RunResults: Iterator<Item = &'a Duration>>(
@@ -170,11 +157,10 @@ fn benchmark_all_proofs_in(
     let (sender, receiver) = crossbeam_channel::unbounded();
     let mut proof_runtimes: HashMap<PathBuf, Vec<Duration>> = HashMap::new();
     let mut started_runs: HashMap<PathBuf, Instant> = HashMap::new();
-    let nr_of_jobs = run_all_proofs_in(path, iterations, parallel_jobs, sender.clone())?;
+    let nr_of_jobs = run_all_proofs_in(path, iterations, parallel_jobs, sender)?;
     let mut completed_jobs = 0;
-    while completed_jobs < nr_of_jobs {
+    while let Ok(JobMessage(proof_path, timestamp, message_type)) = receiver.recv() {
         use JobMessagePayload::*;
-        let JobMessage(proof_path, timestamp, message_type) = receiver.recv().unwrap();
         match message_type {
             JobStarted => {
                 proof_runtimes.insert(proof_path, Vec::new());
@@ -223,7 +209,7 @@ struct Arguments {
     csv_file: PathBuf,
 }
 
-fn main() -> GenericResult<()>{
+fn main() -> GenericResult<()> {
     let args = Arguments::from_args();
 
     benchmark_all_proofs_in(
