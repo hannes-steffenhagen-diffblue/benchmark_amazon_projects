@@ -34,3 +34,12 @@ proofs-path: the "proofs" directory, e.g. `verification/cbmc/proofs` in aws-c-co
 iterations: How many repeated measurements to run on the same proof
 
 parallel-jobs: How many proofs should run in parallel (note that multiple iterations of the same proof can't run in parallel).
+
+
+## Note
+
+Because the AWS projects use litani, which queues up jobs in a job runner
+service, killing this benchmark runner will _not_ kill active cbmc runs. To do
+that, just run a `killall python3` after killing this to clean up any remaining
+litani jobs (of course if you do have any python based services aside from
+litani running you might want to be a bit more selective about this)
