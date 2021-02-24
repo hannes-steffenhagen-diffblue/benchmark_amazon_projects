@@ -21,10 +21,12 @@ enum JobMessagePayload {
     JobStarted,
     RunStarted,
     RunFinished,
+    RunFailed,
     JobFinished,
 }
 
 struct JobMessage(PathBuf, Instant, JobMessagePayload);
+
 struct RunProofMessage {
     job_path: PathBuf,
     iterations: u32,
@@ -50,10 +52,15 @@ fn run_proof(path: &Path, iterations: u32, sender: &Sender<JobMessage>) {
         sender
             .send(JobMessage(path.to_path_buf(), Instant::now(), RunStarted))
             .expect("Receiver shouldn't die while we're still sending messages");
-        run_make("result", path).unwrap();
-        sender
-            .send(JobMessage(path.to_path_buf(), Instant::now(), RunFinished))
-            .expect("Receiver shouldn't die while we're still sending messages");
+        if let Ok(_status) = run_make("result", path) {
+            sender
+                .send(JobMessage(path.to_path_buf(), Instant::now(), RunFinished))
+                .expect("Receiver shouldn't die while we're still sending messages");
+        } else {
+            sender
+                .send(JobMessage(path.to_path_buf(), Instant::now(), RunFailed))
+                .expect("Receiver shouldn't die while we're still sending messages");
+        }
     }
     sender
         .send(JobMessage(path.to_path_buf(), Instant::now(), JobFinished))
@@ -126,7 +133,7 @@ fn run_all_proofs_in(
     Ok(nr_of_jobs)
 }
 
-fn dump_csv<'a, RunResults: Iterator<Item = &'a Duration>>(
+fn dump_csv<'a, RunResults: Iterator<Item = &'a Option<Duration>>>(
     proof_path: &Path,
     run_results: RunResults,
     csv_file: &mut File,
@@ -141,7 +148,10 @@ fn dump_csv<'a, RunResults: Iterator<Item = &'a Duration>>(
         .as_bytes(),
     )?;
     for run in run_results {
-        csv_file.write(format!(",{}", run.as_secs_f32()).as_bytes())?;
+        csv_file.write(",".as_bytes())?;
+        if let Some(runtime) = run {
+            csv_file.write(format!("{}", runtime.as_secs_f32()).as_bytes())?;
+        }
     }
     csv_file.write("\n".as_bytes())?;
     csv_file.flush()
@@ -155,7 +165,7 @@ fn benchmark_all_proofs_in(
 ) -> GenericResult<()> {
     let mut csv_file = OpenOptions::new().create(true).write(true).open(csv_path)?;
     let (sender, receiver) = crossbeam_channel::unbounded();
-    let mut proof_runtimes: HashMap<PathBuf, Vec<Duration>> = HashMap::new();
+    let mut proof_runtimes: HashMap<PathBuf, Vec<Option<Duration>>> = HashMap::new();
     let mut started_runs: HashMap<PathBuf, Instant> = HashMap::new();
     let nr_of_jobs = run_all_proofs_in(path, iterations, parallel_jobs, sender)?;
     let mut completed_jobs = 0;
@@ -163,6 +173,10 @@ fn benchmark_all_proofs_in(
         use JobMessagePayload::*;
         match message_type {
             JobStarted => {
+                println!(
+                    "STARTING {}",
+                    proof_path.to_str().expect("paths should be valid utf-8")
+                );
                 proof_runtimes.insert(proof_path, Vec::new());
             }
             JobFinished => {
@@ -175,22 +189,52 @@ fn benchmark_all_proofs_in(
                 println!("COMPLETED [{}/{}] jobs", completed_jobs, nr_of_jobs);
             }
             RunStarted => {
-                started_runs.insert(proof_path, timestamp);
+                started_runs.insert(proof_path.clone(), timestamp);
+                let run_nr = proof_runtimes
+                    .get(&proof_path)
+                    .expect("can not start a run for a job that hasn't started yet")
+                    .len()
+                    + 1;
+                println!(
+                    "STARTING RUN [{}/{}] for {}",
+                    run_nr,
+                    iterations,
+                    proof_path.to_str().expect("paths should be valid utf-8")
+                );
+            }
+            RunFailed => {
+                let start_time = started_runs
+                    .remove(&proof_path)
+                    .expect("we cannot finish a run we didn't start first");
+                let runtime = Instant::now() - start_time;
+                let proof_runtime = proof_runtimes
+                    .get_mut(&proof_path)
+                    .expect("we cannot fail a run for a job that hasn't been started");
+                println!(
+                    "FAILED RUN [{}/{}] for {} after {}s",
+                    proof_runtime.len(),
+                    iterations,
+                    proof_path.to_str().expect("paths should be valid utf-8"),
+                    runtime.as_secs_f32()
+                );
+                proof_runtime.push(None);
             }
             RunFinished => {
                 let start_time = started_runs
                     .remove(&proof_path)
                     .expect("we cannot finish a run we didn't start first");
                 let runtime = timestamp - start_time;
+                let proof_runtime = proof_runtimes
+                    .get_mut(&proof_path)
+                    .expect("we cannot finish a run in a job that hasn't started yet");
+                proof_runtime.push(Some(runtime));
                 println!(
-                    "{} finished after {}s",
+                    "FINISHED RUN [{}/{}] for {} after {}s",
+                    proof_runtime.len(),
+                    iterations,
                     proof_path.to_str().expect("paths should be valid utf-8"),
                     runtime.as_secs_f32()
                 );
-                proof_runtimes
-                    .get_mut(&proof_path)
-                    .expect("we cannot finish a run in a job that hasn't started yet")
-                    .push(runtime);
             }
         }
     }
