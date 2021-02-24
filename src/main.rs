@@ -52,14 +52,17 @@ fn run_proof(path: &Path, iterations: u32, sender: &Sender<JobMessage>) {
         sender
             .send(JobMessage(path.to_path_buf(), Instant::now(), RunStarted))
             .expect("Receiver shouldn't die while we're still sending messages");
-        if let Ok(_status) = run_make("result", path) {
-            sender
-                .send(JobMessage(path.to_path_buf(), Instant::now(), RunFinished))
-                .expect("Receiver shouldn't die while we're still sending messages");
-        } else {
-            sender
-                .send(JobMessage(path.to_path_buf(), Instant::now(), RunFailed))
-                .expect("Receiver shouldn't die while we're still sending messages");
+        match run_make("result", path) {
+            Ok(status) if status.success() => {
+                sender
+                    .send(JobMessage(path.to_path_buf(), Instant::now(), RunFinished))
+                    .expect("Receiver shouldn't die while we're still sending messages");
+            }
+            _ => {
+                sender
+                    .send(JobMessage(path.to_path_buf(), Instant::now(), RunFailed))
+                    .expect("Receiver shouldn't die while we're still sending messages");
+            }
         }
     }
     sender
