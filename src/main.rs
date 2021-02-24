@@ -14,6 +14,8 @@ use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 use structopt::StructOpt;
 
+type GenericResult<T> = Result<T, Box<dyn Error>>;
+
 #[derive(Clone, Copy, PartialEq)]
 enum JobMessagePayload {
     JobStarted,
@@ -163,7 +165,7 @@ fn benchmark_all_proofs_in(
     iterations: u32,
     parallel_jobs: u32,
     csv_path: &Path,
-) -> Result<(), Box<dyn Error>> {
+) -> GenericResult<()> {
     let mut csv_file = OpenOptions::new().create(true).write(true).open(csv_path)?;
     let (sender, receiver) = crossbeam_channel::unbounded();
     let mut proof_runtimes: HashMap<PathBuf, Vec<Duration>> = HashMap::new();
@@ -221,7 +223,7 @@ struct Arguments {
     csv_file: PathBuf,
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> GenericResult<()>{
     let args = Arguments::from_args();
 
     benchmark_all_proofs_in(
