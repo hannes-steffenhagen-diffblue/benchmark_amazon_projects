@@ -43,12 +43,15 @@ fn run_make(make_command: &str, working_directory: &Path) -> IOResult<ExitStatus
         .status()
 }
 
-fn run_proof(path: &Path, iterations: u32, sender: &Sender<JobMessage>) {
+fn run_proof(path: &Path, iterations: u32, sender: &Sender<JobMessage>) -> IOResult<()> {
     use JobMessagePayload::*;
     sender
         .send(JobMessage(path.to_path_buf(), Instant::now(), JobStarted))
         .expect("Receiver shouldn't die while we're still sending messages");
     for _ in 0..iterations {
+        run_make("veryclean", path)?;
+        run_make("goto", path)?;
+
         sender
             .send(JobMessage(path.to_path_buf(), Instant::now(), RunStarted))
             .expect("Receiver shouldn't die while we're still sending messages");
@@ -68,6 +71,7 @@ fn run_proof(path: &Path, iterations: u32, sender: &Sender<JobMessage>) {
     sender
         .send(JobMessage(path.to_path_buf(), Instant::now(), JobFinished))
         .expect("Receiver shouldn't die while we're still sending messages");
+    Ok(())
 }
 
 fn to_proof_dir(maybe_entry: IOResult<std::fs::DirEntry>) -> Option<PathBuf> {
@@ -90,11 +94,17 @@ fn start_proof_job(receiver: &Receiver<RunProofMessage>, sender: &Sender<JobMess
     let job_receiver = receiver.clone();
     spawn(move || {
         while let Ok(run_proof_message) = job_receiver.recv() {
-            run_proof(
+            if let Err(err) = run_proof(
                 &run_proof_message.job_path,
                 run_proof_message.iterations,
                 &job_sender,
-            );
+            ) {
+                eprintln!(
+                    "ERROR running job {}: {}",
+                    &run_proof_message.job_path.to_str().unwrap(),
+                    err
+                );
+            }
         }
     });
 }
