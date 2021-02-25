@@ -126,12 +126,13 @@ fn run_all_proofs_in(
     };
     let nr_of_jobs = proof_dirs.len();
     let (job_run_sender, job_run_receiver) = crossbeam_channel::unbounded();
-    // spawn the first <parallel-jobs> jobs
+
+    // Create <parallel-jobs> proof executor threads
     for _ in 0..parallel_jobs {
         start_proof_job(&job_run_receiver, &sender);
     }
 
-    // wait for a job to finish before starting the next one
+    // Queue up proof jobs
     for proof_dir in proof_dirs.iter() {
         job_run_sender
             .send(RunProofMessage {
@@ -140,6 +141,8 @@ fn run_all_proofs_in(
             })
             .expect("there should be always at least one job listening to job run requests");
     }
+
+    // Return the number of proofs (just needed for progress message really)
     Ok(nr_of_jobs)
 }
 
