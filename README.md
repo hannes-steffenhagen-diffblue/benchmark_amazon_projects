@@ -46,6 +46,7 @@ litani running you might want to be a bit more selective about this).
 
 For the same reason, a verification failure will presently not be recorded as a
 failed run in the log (because litani's exit status is 0 regardless of how the
-job it started exited). So for the moment you should run the entire proof suite
+job it started exited). ~~So for the moment you should run the entire proof suite
 with `run_cbmc_proofs.py` from the proofs directory first to check if the
-proofs actually all pass.
+proofs actually all pass.~~ Actually it turns out that even that doesn't help.
+There's no easy way to tell if proofs path other than manually reading through the generated HTML reports.
